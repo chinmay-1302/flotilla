@@ -1,7 +1,8 @@
 session_config:
   session_id: facnn_fedavg_iid_docker
   use_gpu: False
-  aggregator: fedavg 
+  communication_protocol: mqtt
+  aggregator: fedavg
   aggregator_args: None
   client_selection: fedavg
   client_selection_args:
@@ -51,5 +52,4 @@ model_config:
   custom_validator_args: None
 
   model_args:
-    num_classes: 10 
-
+    num_classes: 10

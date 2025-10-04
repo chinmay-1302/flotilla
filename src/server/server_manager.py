@@ -47,10 +47,16 @@ class FlotillaServerManager:
         session_run_time = time.time()
 
         self.logger.debug("fedserver.run.started", f"{id},{session_run_time}")
+        protocol = (
+            train_config.get("session_config", {})
+            .get("communication_protocol", "grpc")
+            .lower()
+        )
         session = FloSessionManager(
             id=id,
             client_info=self.client_info,
             mqtt_init_event=self.mqtt_init_finish_event,
+            mqtt_manager=self.mqtt_obj,
             server_config=self.server_config,
             session_config=train_config,
             restore=restore,
@@ -58,7 +64,10 @@ class FlotillaServerManager:
             file=file,
         )
         await session.start_session()
-        os.rename(f"logs/flotilla_{id}.log",f"logs/flotilla_{id}_{train_config['session_id']}")
+        os.rename(
+            f"logs/flotilla_{id}.log",
+            f"logs/flotilla_{id}_{train_config['session_id']}",
+        )
         self.logger.debug(
             "fedserver.run.finished", f"{id},{time.time()-session_run_time}"
         )

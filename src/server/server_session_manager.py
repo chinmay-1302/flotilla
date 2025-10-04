@@ -1,9 +1,11 @@
 import asyncio
 import io
 import os
-import pickle
 import sys
 import tarfile
+import json
+import base64
+import pickle
 from time import time
 
 import grpc
@@ -32,6 +34,7 @@ class FloSessionManager:
         id,
         client_info,
         mqtt_init_event,
+        mqtt_manager,
         server_config,
         session_config,
         restore,
@@ -43,6 +46,8 @@ class FloSessionManager:
 
         self.client_info = client_info
         self.mqtt_init_finish_event = mqtt_init_event
+        self.mqtt = mqtt_manager
+        self.rounds_issued = set()
 
         validation_data_dir_path = server_config["validation_data_dir_path"]
         self.dataset_available = get_available_datasets(validation_data_dir_path)
@@ -116,6 +121,12 @@ class FloSessionManager:
             self.training_session.put(f"{self.id}.status", "running")
             self.training_session.put(f"{self.id}.last_round_number", 0)
             self.training_session.put(f"{self.id}.global_validation_metrics", results)
+
+        self.protocol = (
+            session_config["session_config"]
+            .get("communication_protocol", "grpc")
+            .lower()
+        )
 
         if session_config["session_config"]["use_gpu"]:
             self.torch_device = torch_device("cuda" if is_available() else "cpu")
@@ -275,7 +286,10 @@ class FloSessionManager:
     async def start_session(self):
         self.logger.debug("session_id", str(self.id))
         self.mqtt_init_finish_event.wait()
-        await self.echo()
+        if self.protocol == "grpc":
+            await self.echo()
+        else:
+            self.setup_mqtt_handlers()
 
         active_clients = self.get_active_clients()
         for client in active_clients:
@@ -345,6 +359,204 @@ class FloSessionManager:
         self.logger.info(
             "fedserver_gRPC.echo.finished", f"time_taken,{time()-start_time}"
         )
+
+    # ---------------- MQTT orchestration helpers -----------------
+    def setup_mqtt_handlers(self):
+        # Train results
+        def on_train_result(client, userdata, message):
+            try:
+                body = json.loads(str(message.payload.decode()))
+                client_id = message.topic.split("/")[-1]
+                metrics = body.get("metrics", {})
+                weights_b64 = body.get("weights_b64")
+                local_model_wts = None
+                if weights_b64:
+                    local_model_wts = pickle.loads(base64.b64decode(weights_b64))
+                self.mqtt_train_callback(
+                    client_id=client_id,
+                    metrics=metrics,
+                    local_model_wts=local_model_wts,
+                )
+            except Exception as e:
+                self.logger.error("fedserver_mqtt.train.result.error", str(e))
+
+        # Benchmark results
+        def on_benchmark_result(client, userdata, message):
+            try:
+                body = json.loads(str(message.payload.decode()))
+                client_id = message.topic.split("/")[-1]
+                model_id = body.get("model_id")
+                info = {
+                    model_id: {
+                        "time_taken_s": body.get("bench_duration_s"),
+                        "num_mini_batches": body.get("num_mini_batches"),
+                        "model_hash": body.get("hash"),
+                    }
+                }
+                self.client_info.put(f"{client_id}.benchmark_info", info)
+            except Exception as e:
+                self.logger.error("fedserver_mqtt.benchmark.result.error", str(e))
+
+        # Test results
+        def on_test_result(client, userdata, message):
+            try:
+                body = json.loads(str(message.payload.decode()))
+                client_id = message.topic.split("/")[-1]
+                round_no = body.get("round_id")
+                metrics = body.get("metrics", {})
+                try:
+                    res = self.training_state.get(f"{client_id}.validation_metrics")
+                    res[round_no] = metrics
+                    self.training_state.put(f"{client_id}.validation_metrics", res)
+                except Exception:
+                    self.training_state.put(
+                        f"{client_id}.validation_metrics", {round_no: metrics}
+                    )
+            except Exception as e:
+                self.logger.error("fedserver_mqtt.test.result.error", str(e))
+
+        # Status and error handling (artifact request)
+        def on_status(client, userdata, message):
+            try:
+                body = json.loads(str(message.payload.decode()))
+                client_id = message.topic.split("/")[-1]
+                status = body.get("status")
+                msg = str(body.get("message", ""))
+                if status == "ERROR" and "artifact" in msg.lower():
+                    # publish artifact tarball for current model
+                    model_id = self.train_config["model_id"]
+                    self.publish_model_artifact(model_id=model_id)
+            except Exception as e:
+                self.logger.error("fedserver_mqtt.status.error", str(e))
+
+        self.mqtt.subscribe("flotilla/client/result/train/+", on_train_result)
+        self.mqtt.subscribe("flotilla/client/result/benchmark/+", on_benchmark_result)
+        self.mqtt.subscribe("flotilla/client/result/test/+", on_test_result)
+        self.mqtt.subscribe("flotilla/client/status/+", on_status)
+
+    def mqtt_publish_global_model(self, round_no: int):
+        weights = self.model_util.get_model_weights()
+        payload = json.dumps(
+            {
+                "session_id": self.id,
+                "round_id": round_no,
+                "model_id": self.train_config["model_id"],
+                "model_class": self.train_config["model_class"],
+                "hash": get_model_dir_hash(self.train_config["model_dir"]),
+                "timestamp": time(),
+                "weights_b64": base64.b64encode(pickle.dumps(weights)).decode("utf-8"),
+            }
+        )
+        self.mqtt.publish("flotilla/server/model/global", payload, qos=1, retain=True)
+
+    def publish_model_artifact(self, model_id: str):
+        # Create tarball of model dir and publish
+        model_dir = self.train_config["model_dir"]
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            for root, _, files in os.walk(model_dir):
+                for f in files:
+                    path = os.path.join(root, f)
+                    arcname = os.path.relpath(path, model_dir)
+                    tf.add(path, arcname=arcname)
+        artifact_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        payload = json.dumps(
+            {
+                "model_id": model_id,
+                "model_class": self.train_config["model_class"],
+                "hash": get_model_dir_hash(model_dir),
+                "timestamp": time(),
+                "artifact_b64": artifact_b64,
+                "filename": f"model_{model_id}.tar",
+            }
+        )
+        self.mqtt.publish(
+            f"flotilla/server/model/artifact/{model_id}", payload, qos=1, retain=False
+        )
+
+    def mqtt_publish_command(
+        self, client_id: str, task: str, params: dict, round_no: int
+    ):
+        body = {
+            "task": task,
+            "task_id": str(self.id) + f"-{round_no}-{client_id}-{task}",
+            "session_id": self.id,
+            "round_id": round_no,
+            "timestamp": time(),
+            "params": params,
+        }
+        self.mqtt.publish(
+            f"flotilla/server/command/{client_id}",
+            json.dumps(body),
+            qos=1,
+            retain=False,
+        )
+
+    def mqtt_train_callback(self, client_id: str, metrics: dict, local_model_wts):
+        # Mirror grpc_train_callback logic
+        round_no = int(self.training_session.get(f"{self.id}.last_round_number"))
+        if local_model_wts is None:
+            # client considered dropped for this round
+            aggregated_model = self.aggregate(
+                session_id=self.id,
+                client_id=client_id,
+                client_active=False,
+                client_local_weights=None,
+                client_info=self.client_info,
+                training_state=self.training_state,
+                training_session=self.training_session,
+                aggregator_state=self.aggregator_state,
+                client_selection_state=self.client_selection_state,
+                args=self.aggregator_args,
+            )
+        else:
+            self.training_state.put(f"{client_id}.weights", local_model_wts)
+            training_metrics = self.training_state.get(f"{client_id}.training_metrics")
+            if training_metrics is None:
+                self.training_state.put(
+                    f"{client_id}.training_metrics", {round_no: metrics}
+                )
+            else:
+                training_metrics[round_no] = metrics
+                self.training_state.put(
+                    f"{client_id}.training_metrics", training_metrics
+                )
+            aggregated_model = self.aggregate(
+                session_id=self.id,
+                client_id=client_id,
+                client_active=True,
+                client_local_weights=local_model_wts,
+                client_info=self.client_info,
+                training_state=self.training_state,
+                training_session=self.training_session,
+                aggregator_state=self.aggregator_state,
+                client_selection_state=self.client_selection_state,
+                args=self.aggregator_args,
+            )
+
+        if aggregated_model:
+            self.training_session.put(f"{self.id}.global_model", aggregated_model)
+            self.model_util.set_model_weights(aggregated_model)
+            # Optional server-side validation
+            if round_no % self.server_validation_interval == 0:
+                global_validation_metrics = self.model_util.validate_model(
+                    round_no=round_no
+                )
+                results = self.training_session.get(
+                    f"{self.id}.global_validation_metrics"
+                )
+                for key in global_validation_metrics.keys():
+                    if key in results:
+                        results[key].append(global_validation_metrics[key])
+                    else:
+                        results[key] = [global_validation_metrics[key]]
+                self.training_session.put(
+                    f"{self.id}.global_validation_metrics", results
+                )
+
+            self.training_session.put(f"{self.id}.last_round_number", round_no + 1)
+            # Signal round advancement
+            # NOTE: train loop waits on an external event we set via mqtt; handled in train()
 
     async def grpc_send_model(
         self, client_id: str, model_id: str, model_hash, path: str
@@ -1013,7 +1225,8 @@ class FloSessionManager:
         while (
             self.training_session.get(f"{self.id}.last_round_number") < training_rounds
         ):
-            await model_updated_event.wait()
+            if self.protocol == "grpc":
+                await model_updated_event.wait()
             if self.skip_bench == False:
                 benchmark_overhead_time = time()
                 benchmark_clients = list()
@@ -1087,29 +1300,48 @@ class FloSessionManager:
                     "fedserver_gRPC.train.round.init",
                     f"round_no-num_clients-clients,{round_no},{len(training_clients)},{','.join([str(x) for x in training_clients])}",
                 )
-                await self.send_model(model_id, model_dir, training_clients)
-                asyncio.gather(
-                    *(
-                        self.async_grpc_train(
-                            client_id=client_id,
-                            session_id=self.id,
-                            model_id=model_id,
-                            model_class=model_class,
-                            model_wts=model_wts,
-                            dataset_id=dataset_id,
-                            batch_size=batch_size,
-                            learning_rate=lr,
-                            num_epochs=epochs,
-                            round_no=round_no,
-                            timeout_duration_s=timeout,
-                            loss=loss,
-                            optimizer=optimizer,
-                            model_updated_event=model_updated_event,
-                            model_updated_condition=model_updated_condition,
+                if self.protocol == "grpc":
+                    await self.send_model(model_id, model_dir, training_clients)
+                    asyncio.gather(
+                        *(
+                            self.async_grpc_train(
+                                client_id=client_id,
+                                session_id=self.id,
+                                model_id=model_id,
+                                model_class=model_class,
+                                model_wts=model_wts,
+                                dataset_id=dataset_id,
+                                batch_size=batch_size,
+                                learning_rate=lr,
+                                num_epochs=epochs,
+                                round_no=round_no,
+                                timeout_duration_s=timeout,
+                                loss=loss,
+                                optimizer=optimizer,
+                                model_updated_event=model_updated_event,
+                                model_updated_condition=model_updated_condition,
+                            )
+                            for client_id in training_clients
                         )
-                        for client_id in training_clients
                     )
-                )
+                else:
+                    # MQTT: publish retained global model for the round and send commands
+                    if round_no not in self.rounds_issued:
+                        self.mqtt_publish_global_model(round_no)
+                        for client_id in training_clients:
+                            params = {
+                                "model_id": model_id,
+                                "model_class": model_class,
+                                "dataset_id": dataset_id,
+                                "batch_size": batch_size,
+                                "learning_rate": lr,
+                                "num_epochs": epochs,
+                                "timeout_duration_s": timeout,
+                            }
+                            self.mqtt_publish_command(
+                                client_id, "TRAIN", params, round_no
+                            )
+                        self.rounds_issued.add(round_no)
 
             if validation_clients and len(validation_clients) > 0:
                 model_wts = self.model_util.get_model_weights()
@@ -1120,29 +1352,51 @@ class FloSessionManager:
                     "fedserver_gRPC.validation.round.init",
                     f"round_no-num_clients-clients,{round_no},{len(validation_clients)},{','.join([str(x) for x in validation_clients])}",
                 )
-                await self.send_model(model_id, model_dir, validation_clients)
-                asyncio.gather(
-                    *(
-                        self.async_grpc_validation(
-                            client_id=client_id,
-                            session_id=self.id,
-                            model_id=model_id,
-                            model_class=model_class,
-                            model_wts=model_wts,
-                            dataset_id=dataset_id,
-                            batch_size=batch_size,
-                            round_no=round_no,
-                            loss=loss,
-                            optimizer=optimizer,
-                            model_updated_event=model_updated_event,
-                            model_updated_condition=model_updated_condition,
+                if self.protocol == "grpc":
+                    await self.send_model(model_id, model_dir, validation_clients)
+                    asyncio.gather(
+                        *(
+                            self.async_grpc_validation(
+                                client_id=client_id,
+                                session_id=self.id,
+                                model_id=model_id,
+                                model_class=model_class,
+                                model_wts=model_wts,
+                                dataset_id=dataset_id,
+                                batch_size=batch_size,
+                                round_no=round_no,
+                                loss=loss,
+                                optimizer=optimizer,
+                                model_updated_event=model_updated_event,
+                                model_updated_condition=model_updated_condition,
+                            )
+                            for client_id in validation_clients
                         )
-                        for client_id in validation_clients
                     )
-                )
+                else:
+                    # MQTT: publish retained global model for the round and send test commands
+                    if round_no not in self.rounds_issued:
+                        self.mqtt_publish_global_model(round_no)
+                        for client_id in validation_clients:
+                            params = {
+                                "model_id": model_id,
+                                "model_class": model_class,
+                                "dataset_id": dataset_id,
+                                "batch_size": batch_size,
+                            }
+                            self.mqtt_publish_command(
+                                client_id, "TEST", params, round_no
+                            )
+                        self.rounds_issued.add(round_no)
 
-            model_updated_event.clear()
-            model_updated_condition.release()
+            if self.protocol == "grpc":
+                model_updated_event.clear()
+                model_updated_condition.release()
+            else:
+                # In MQTT mode, proceed when round number advances (set in mqtt_train_callback)
+                if self.training_session.get(f"{self.id}.last_round_number") > round_no:
+                    continue
+                await asyncio.sleep(0.05)
 
         self.logger.info("fedserver.session.loop_runtime", f"{time()-start_time}")
         print(f"Training Ends.")

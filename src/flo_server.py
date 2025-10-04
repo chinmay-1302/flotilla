@@ -23,7 +23,7 @@ app = Flask("flo_server")
 
 process_id: int = getpid()
 session_running = Event()
-server_config = OpenYaML("./config/server_config.yaml")
+server_config = OpenYaML("./config/server_config_local.yaml")
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -94,7 +94,7 @@ def execute_command():
             )
         elif data["session_id"]:
             session_id = data["session_id"]
-            handle_request(session_id=session_id,session_config=session_config)
+            handle_request(session_id=session_id, session_config=session_config)
 
         return jsonify({"message": f"Session {session_id} finished"}), 200
     else:

@@ -21,9 +21,11 @@ class MQTTManager:
         self.hw_info: dict = get_hardware_info()
 
         self.mqtt_broker: str = config["mqtt_broker"]
-        self.mqtt_broker_port: int = config["mqtt_broker_port"]
-        self.mqtt_server_topic: str = config["mqtt_server_topic"]
-        self.mqtt_client_topic: str = config["mqtt_client_topic"]
+        self.mqtt_broker_port: int = int(config["mqtt_broker_port"])
+        # New topic scheme (MQTT-only mode)
+        self.server_advertise_topic: str = "flotilla/server/advertise"
+        self.client_advertise_topic: str = "flotilla/client/advertise"
+        self.client_heartbeat_topic_prefix: str = "flotilla/client/heartbeat/"
         self.mqtt_sub_timeout: int = config["mqtt_sub_timeout_s"]
         self.mqtt_heartbeat_interval_s: int = config["mqtt_heartbeat_interval_s"]
         self.num_heartbeats_timestamp_cached: int = config[
@@ -35,6 +37,9 @@ class MQTTManager:
         self.heard_from_client_event: Event = Event()
 
     def mqtt_ad(self, client_info, stop_event, grpc_event):
+        # Expose client for publishing/subscribing from other components
+        self.client = None
+
         def on_connect(client, userdata, flags, rc):
             self.logger.info(
                 "MQTT.server.connect.request", f"MQTT connection status,{rc}"
@@ -52,14 +57,15 @@ class MQTTManager:
 
         def message_ad_response(client, userdata, message):
             info = json.loads(str(message.payload.decode()))
-
             client_id = list(info.keys())[0]
-
             client_name = info[str(client_id)]["payload"]["name"]
             client_info.put(f"{client_id}.client_name", client_name)
-
-            grpc_ep = info[str(client_id)]["payload"]["grpc_ep"]
-            client_info.put(f"{client_id}.grpc_ep", grpc_ep)
+            # grpc_ep may not be present in MQTT-only mode
+            try:
+                grpc_ep = info[str(client_id)]["payload"]["grpc_ep"]
+                client_info.put(f"{client_id}.grpc_ep", grpc_ep)
+            except KeyError:
+                pass
 
             benchmark_info = info[str(client_id)]["payload"]["benchmark_info"]
             client_info.put(f"{client_id}.benchmark_info", benchmark_info)
@@ -131,7 +137,10 @@ class MQTTManager:
                 )
 
         client_user_data = self.heard_from_client_event
-        client = mqtt.Client(f"flo_server", userdata=client_user_data)
+        client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION1, f"flo_server", userdata=client_user_data
+        )
+        self.client = client
 
         client.on_connect = on_connect
         client.on_subscribe = on_subscribe
@@ -143,34 +152,37 @@ class MQTTManager:
             f"Connected to MQTT Broker at,{self.mqtt_broker}:{self.mqtt_broker_port}",
         )
 
-        client.message_callback_add(self.mqtt_client_topic, message_ad_response)
-        client.message_callback_add("heartbeat", message_heartbeat_response)
-        client.subscribe(self.mqtt_client_topic)
-        client.subscribe("heartbeat")
+        # Subscribe to new topics
+        client.message_callback_add(self.client_advertise_topic, message_ad_response)
+        client.subscribe(self.client_advertise_topic, qos=1)
+        # Heartbeats are per-client: flotilla/client/heartbeat/{client_id}
+        client.message_callback_add(
+            self.client_heartbeat_topic_prefix + "+", message_heartbeat_response
+        )
+        client.subscribe(self.client_heartbeat_topic_prefix + "+", qos=1)
         self.logger.info(
             "MQTT.server.subscribed.topics",
-            f"Subscribed to topics:,{self.mqtt_client_topic},heartbeat",
+            f"Subscribed to topics:,{self.client_advertise_topic},{self.client_heartbeat_topic_prefix}+",
         )
 
         client.loop_start()
 
+        # Server advertise retained payload for runtime params
         payload = json.dumps(
             {
                 "type": self.type_,
                 "timestamp": time.time(),
-                "grpc_ep": None,
-                "mqtt_client_topic": self.mqtt_client_topic,
-                "cluster_id": None,
                 "heartbeat_interval": self.mqtt_heartbeat_interval_s,
-                "hw_info": self.hw_info,
             }
         )
 
-        client.publish(topic=self.mqtt_server_topic, payload=payload, retain=True)
+        client.publish(
+            topic=self.server_advertise_topic, payload=payload, qos=1, retain=True
+        )
 
         self.logger.info(
             "MQTT.server.advert.publish.topic",
-            f"Payload published on topic,{self.mqtt_server_topic}",
+            f"Payload published on topic,{self.server_advertise_topic}",
         )
         self.logger.debug(
             "MQTT.server.advert.publish.payload",
@@ -200,6 +212,20 @@ class MQTTManager:
 
         stop_event.wait()
         client.loop_stop()
+
+    # Helper methods to be used by session manager in MQTT mode
+    def publish(self, topic: str, payload: str, qos: int = 1, retain: bool = False):
+        if getattr(self, "client", None) is None:
+            self.logger.error("MQTT.server.publish.error", "client not initialized")
+            return
+        self.client.publish(topic=topic, payload=payload, qos=qos, retain=retain)
+
+    def subscribe(self, topic: str, callback):
+        if getattr(self, "client", None) is None:
+            self.logger.error("MQTT.server.subscribe.error", "client not initialized")
+            return
+        self.client.message_callback_add(topic, callback)
+        self.client.subscribe(topic, qos=1)
 
     def heartbeat_alive_check(self, client_info):
         heartbeat_interval_flag = Event()
