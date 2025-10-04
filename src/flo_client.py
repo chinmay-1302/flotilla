@@ -17,7 +17,7 @@ from client.utils.monitor import Monitor
 
 def main():
     pid = os.getpid()
-    client_config = OpenYaML(os.path.join("config", "client_config.yaml"))
+    client_config = OpenYaML(os.path.join("config", "client_config_local.yaml"))
     temp_dir_path = os.path.join(client_config["general_config"]["temp_dir_path"])
     if os.path.isfile(os.path.join(temp_dir_path, "client_info.yaml")):
         client_info = OpenYaML(os.path.join(temp_dir_path, "client_info.yaml"))

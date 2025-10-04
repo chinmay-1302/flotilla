@@ -110,6 +110,8 @@ class ClientManager:
             temp_dir_path=self.temp_dir_path,
             dataset_details=self.dataset_details,
             client_info=self.client_info,
+            torch_device=self.torch_device,
+            dataset_paths=self.dataset_paths,
         )
         mqtt_task = Thread(target=mqtt_client.mqtt_sub, args=(stop_event,))
         mqtt_task.start()
@@ -150,7 +152,10 @@ class ClientManager:
 
             self.logger.info("fedclient.init", "")
 
-            grpc_sync_server = self.grpc_init(stop_event)
+            protocol = os.environ.get("FLOTILLA_PROTOCOL", "grpc").lower()
+            grpc_sync_server = None
+            if protocol != "mqtt":
+                grpc_sync_server = self.grpc_init(stop_event)
 
             mqtt_server = self.mqtt_init(stop_event)
 
@@ -165,6 +170,7 @@ class ClientManager:
             self.logger.info("fedclient.Keyboard_interrupt.exit", "")
 
     def exit_procedure(self, stop_event, grpc_sync_server, mqtt_server):
-        grpc_sync_server.stop(grace=None)
+        if grpc_sync_server is not None:
+            grpc_sync_server.stop(grace=None)
         stop_event.set()
         mqtt_server.join()
