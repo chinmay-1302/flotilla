@@ -7,6 +7,7 @@ Licensed under the Apache License, Version 2.0, http://www.apache.org/licenses/L
 
 import hashlib
 import importlib
+import importlib.util
 import inspect
 import os
 import pickle
@@ -179,16 +180,29 @@ def get_model_class(path: str, model_id: str, class_name: str):
     model_dir_path = os.path.join(model_cache_dir_path, model_id)
     if os.path.isdir(model_cache_dir_path):
         add_init_file_to_dir(dir_path=model_dir_path, empty_init_file=False)
+
+        # Add the temp directory to Python path so we can import from it
+        temp_dir_abspath = os.path.abspath(path)
+        if temp_dir_abspath not in sys.path:
+            sys.path.append(temp_dir_abspath)
+
         model_cache_dir_abspath = os.path.abspath(model_cache_dir_path)
-        sys.path.append(model_cache_dir_abspath)
+        if model_cache_dir_abspath not in sys.path:
+            sys.path.append(model_cache_dir_abspath)
+
         module_imported = importlib.import_module(model_id, package=None)
         model_dir_abspath = os.path.abspath(model_dir_path)
-        sys.path.append(model_dir_abspath)
+        if model_dir_abspath not in sys.path:
+            sys.path.append(model_dir_abspath)
 
         for file in module_imported.__all__:
-            model_imported = importlib.import_module(
-                f"{path}.model_cache.{model_id}.{file}"
+            # Import the module directly from the file path
+            module_file_path = os.path.join(model_dir_path, f"{file}.py")
+            spec = importlib.util.spec_from_file_location(
+                f"{model_id}_{file}", module_file_path
             )
+            model_imported = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_imported)
 
             for name_local in dir(model_imported):
                 unknown_class = getattr(model_imported, name_local)

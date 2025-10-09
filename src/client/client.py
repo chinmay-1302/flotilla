@@ -149,6 +149,12 @@ class Client:
         dataset_path: str = self.dataset_paths[dataset_id]
 
         try:
+            print(
+                f"Creating ClientTrainer with model_id: {model_id}, model_class: {model_class}"
+            )
+            print(
+                f"Model cache path: {join(self.temp_dir_path, 'model_cache', model_id)}"
+            )
             model_trainer = ClientTrainer(
                 temp_dir_path=self.temp_dir_path,
                 model_id=model_id,
@@ -161,8 +167,14 @@ class Client:
                 model_args=model_args,
             )
             model_trainer.model.to(self.torch_device)
+            print("ClientTrainer created successfully")
         except Exception as e:
             self.logger.error("fedclient.StartTraining.exception", f"{e}")
+            print(f"ClientTrainer creation failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return None, None
 
         if (
             self.train_loader is None
