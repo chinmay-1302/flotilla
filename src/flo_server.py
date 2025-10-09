@@ -62,7 +62,10 @@ def handle_request(
     except KeyboardInterrupt:
         print("Received KeyboardInterrupt")
     except Exception as e:
-        print(e)
+        print(f"Exception details: {e}")
+        import traceback
+
+        traceback.print_exc()
         print("Exception in Gather loop")
     finally:
         session_running.clear()
@@ -94,7 +97,7 @@ def execute_command():
             )
         elif data["session_id"]:
             session_id = data["session_id"]
-            handle_request(session_id=session_id,session_config=session_config)
+            handle_request(session_id=session_id, session_config=session_config)
 
         return jsonify({"message": f"Session {session_id} finished"}), 200
     else:
