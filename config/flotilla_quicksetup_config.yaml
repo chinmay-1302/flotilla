@@ -1,7 +1,7 @@
 session_config:
   session_id: facnn_fedavg_iid_docker
   use_gpu: False
-  aggregator: fedavg 
+  aggregator: fedavg
   aggregator_args: None
   client_selection: fedavg
   client_selection_args:
@@ -24,8 +24,8 @@ benchmark_config:
 server_training_config:
   model_dir: ../models/FedAT_CNN
   validation_dataset: CIFAR10_IID
-  global_model_validation_batch_size: 100
-  num_training_rounds: 100
+  global_model_validation_batch_size: 10
+  num_training_rounds: 10
 
 client_training_config:
   model_id: FedAT_CNN
@@ -51,5 +51,4 @@ model_config:
   custom_validator_args: None
 
   model_args:
-    num_classes: 10 
-
+    num_classes: 10
