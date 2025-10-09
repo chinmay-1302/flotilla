@@ -15,21 +15,21 @@ class DataLoader:
         pass
 
     def get_train_loader(self, batch_size=16, dataset_path=None):
-        train_dataset = torch.load(dataset_path).dataset
+        train_dataset = torch.load(dataset_path, weights_only=False).dataset
         train_loader = torch.utils.data.DataLoader(
             train_dataset, shuffle=True, batch_size=batch_size
         )
         return train_loader
 
     def get_test_loader(self, batch_size=16, dataset_path=None):
-        test_dataset = torch.load(dataset_path).dataset
+        test_dataset = torch.load(dataset_path, weights_only=False).dataset
         test_loader = torch.utils.data.DataLoader(
             test_dataset, shuffle=True, batch_size=batch_size
         )
         return test_loader
 
     def get_train_test_dataset_loaders(self, batch_size=16, dataset_path=None):
-        dataset = torch.load(dataset_path).dataset
+        dataset = torch.load(dataset_path, weights_only=False).dataset
 
         dataset_len = len(dataset)
 

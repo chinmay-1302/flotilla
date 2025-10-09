@@ -34,9 +34,14 @@ class ServerModelManager:
         self.model_dir = model_dir
 
         torch.manual_seed(1122001)
-        self.model = get_model_class(path=model_dir, class_name=model_class)(
-            device=torch_device, args=model_args
-        )
+        print(f"Loading model from: {model_dir}, class: {model_class}")
+        model_class_obj = get_model_class(path=model_dir, class_name=model_class)
+        if model_class_obj is None:
+            raise Exception(
+                f"Failed to load model class {model_class} from {model_dir}"
+            )
+        print(f"Successfully loaded model class: {model_class_obj}")
+        self.model = model_class_obj(device=torch_device, args=model_args)
 
         self.logger = FedLogger(id=self.id, loggername="SERVER_MODEL_MANAGER")
 
@@ -84,7 +89,7 @@ class ServerModelManager:
         return self.loss_fun
 
     def test_dataset_loader(self, path: str, batch_size=50):
-        test_dataset = torch.load(path).dataset
+        test_dataset = torch.load(path, weights_only=False).dataset
         print("Length of test dataset", len(test_dataset))
 
         data = torch.utils.data.DataLoader(

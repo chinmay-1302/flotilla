@@ -31,7 +31,11 @@ for idx, data_loader in enumerate(partitions):
 
 # Step 5: Load the partitions
 train_loader = torch.utils.data.DataLoader(
-    torch.load(os.path.join(save_dir, "partition-0.pth")), shuffle=True, batch_size=1
+    torch.load(os.path.join(save_dir, "partition-0.pth"), weights_only=False),
+    shuffle=True,
+    batch_size=1,
 )
-train_dataset = torch.load(os.path.join(save_dir, "partition-0.pth")).dataset
+train_dataset = torch.load(
+    os.path.join(save_dir, "partition-0.pth"), weights_only=False
+).dataset
 print(train_dataset[0], len(train_loader))

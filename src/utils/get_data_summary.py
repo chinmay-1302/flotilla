@@ -7,7 +7,7 @@ import torch
 dataset_path = sys.argv[1]
 
 try:
-    dataset = torch.load(dataset_path).dataset
+    dataset = torch.load(dataset_path, weights_only=False).dataset
     num_items = len(dataset)
     class_distrb = dict(Counter(dataset[i][1] for i in range(len(dataset))))
     for i, v in class_distrb.items():
