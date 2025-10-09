@@ -1,40 +1,41 @@
 session_config:
-  session_id: facnn_fedavg_iid_docker
+  session_id: mobilenet_fedavg_cifar10_quicksetup
   use_gpu: False
   aggregator: fedavg
   aggregator_args: None
   client_selection: fedavg
   client_selection_args:
     client_fraction: 1
-  checkpoint_interval: 1000
+  checkpoint_interval: 10
   validation_round_interval: 1
-  generate_plots: False
+  generate_plots: True
 
 benchmark_config:
   skip_benchmark: True
-  model_id: FedAT_CNN
-  model_dir: ../models/FedAT_CNN
-  model_class: FedAT_CNN
+  model_id: MobileNet
+  model_dir: models/MobileNet
+  model_class: MobileNet
   dataset: CIFAR10_IID
-  bench_minibatch_count: 500
+  bench_minibatch_count: 10
   batch_size: 4
-  learning_rate: 0.0001
+  learning_rate: 0.001
   timeout_duration_s: 180
 
 server_training_config:
-  model_dir: ../models/FedAT_CNN
+  model_dir: models/MobileNet
   validation_dataset: CIFAR10_IID
-  global_model_validation_batch_size: 10
-  num_training_rounds: 10
+  global_model_validation_batch_size: 32
+  num_training_rounds: 3
+  global_timeout_duration_s: 3600
 
 client_training_config:
-  model_id: FedAT_CNN
-  model_class: FedAT_CNN
+  model_id: MobileNet
+  model_class: MobileNet
   dataset: CIFAR10_IID
-  epochs: 3
+  epochs: 1
   batch_size: 4
-  learning_rate: 0.00005
-  train_timeout_duration_s: 300
+  learning_rate: 0.001
+  train_timeout_duration_s: 600
   loss_function: crossentropy
   loss_function_custom: True
   optimizer: adam
