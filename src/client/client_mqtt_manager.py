@@ -107,7 +107,11 @@ class ClientMQTTManager:
             )
 
         client_userdata = self.heard_from_server_event
-        client = mqtt.Client(f"FedML_client_{self.client_id}", userdata=client_userdata)
+        client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+            client_id=f"FedML_client_{self.client_id}",
+            userdata=client_userdata,
+        )
         client.user_data_set(self.heard_from_server_event)
 
         client.on_connect = on_connect

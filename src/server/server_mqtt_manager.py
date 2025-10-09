@@ -131,7 +131,11 @@ class MQTTManager:
                 )
 
         client_user_data = self.heard_from_client_event
-        client = mqtt.Client(f"flo_server", userdata=client_user_data)
+        client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+            client_id=f"flo_server",
+            userdata=client_user_data,
+        )
 
         client.on_connect = on_connect
         client.on_subscribe = on_subscribe
