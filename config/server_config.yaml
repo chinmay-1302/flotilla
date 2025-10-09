@@ -12,7 +12,7 @@ comm_config:
   grpc:
     max_message_length: 1048576000 # (1000*1024*1024)
     chunk_size_bytes: 1024
-    timeout_s: 30
+    timeout_s: 600
   restful:
     rest_hostname: 0.0.0.0
     rest_port: 12345
@@ -21,5 +21,5 @@ state:
   state_hostname: null
   state_port: null
 checkpoint_dir_path: ./checkpoints
-validation_data_dir_path: ./data
+validation_data_dir_path: src/val_data
 temp_dir_path: ./scratch

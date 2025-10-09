@@ -13,7 +13,7 @@ comm_config:
     sync_port: 50053
     async_port: 50054
 dataset_config:
-  datasets_dir_path: ./data
+  datasets_dir_path: src/data
 general_config:
   temp_dir_path: ./temp
   cleanup_session_on_exit: False
