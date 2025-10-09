@@ -58,7 +58,10 @@ class FlotillaServerManager:
             file=file,
         )
         await session.start_session()
-        os.rename(f"logs/flotilla_{id}.log",f"logs/flotilla_{id}_{train_config['session_id']}")
+        os.rename(
+            f"logs/flotilla_{id}.log",
+            f"logs/flotilla_{id}_{train_config['session_config']['session_id']}",
+        )
         self.logger.debug(
             "fedserver.run.finished", f"{id},{time.time()-session_run_time}"
         )
