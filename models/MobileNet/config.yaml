@@ -1,6 +1,6 @@
 model_details:
   model_id: MobileNet
-  model_class: MobileNet_class
+  model_class: MobileNet
   model_tags: [CNN]
   suitable_datasets: [CIFAR-10]
 
