@@ -38,6 +38,7 @@ class FloSessionManager:
         revive,
         file,
     ) -> None:
+        print(f"Initializing FloSessionManager with id: {id}")
         self.id = id
         self.logger = FedLogger(id=self.id, loggername="SESSION_MANAGER")
 
@@ -172,6 +173,9 @@ class FloSessionManager:
                 "default_training_config"
             ]
 
+        print(
+            f"About to initialize ServerModelManager with model_dir: {self.train_config['model_dir']}, model_class: {self.train_config['model_class']}"
+        )
         self.model_util = ServerModelManager(
             id=self.id,
             torch_device=self.torch_device,
@@ -999,6 +1003,14 @@ class FloSessionManager:
         for client in self.training_state.keys():
             self.training_state.put(f"{client}.current_dataset", dataset_id)
             data_distribution = self.client_info.get(f"{client}.dataset_details")
+            print(f"Client {client} dataset_details: {data_distribution}")
+            if data_distribution is None:
+                print(f"ERROR: Client {client} has no dataset_details!")
+                continue
+            if dataset_id not in data_distribution:
+                print(f"ERROR: Client {client} doesn't have dataset {dataset_id}!")
+                print(f"Available datasets: {list(data_distribution.keys())}")
+                continue
             self.training_state.put(
                 f"{client}.current_dataset_detail", data_distribution[dataset_id]
             )

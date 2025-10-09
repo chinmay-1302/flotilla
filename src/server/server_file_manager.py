@@ -86,10 +86,12 @@ def get_model_class(path: str, class_name: str):
 def get_available_datasets(path: str) -> dict:
     """Function that returns a list of all datasets present in data directory. Each sub directory needs to contain \"dataset_config.yaml\"."""
 
+    print(f"Looking for datasets in path: {path}")
     available_datasets_dir = list()
     available_datasets = dict()
     if os.path.isdir(path):
         available_datasets_dir = [f.name for f in os.scandir(path) if f.is_dir()]
+        print(f"Found directories: {available_datasets_dir}")
         for dataset in available_datasets_dir:
             with open(os.path.join(path, dataset, "dataset_config.yaml")) as file:
                 try:
@@ -97,13 +99,16 @@ def get_available_datasets(path: str) -> dict:
                 except yaml.YAMLError as err:
                     print(err)
             available_datasets[dataset] = dataset_config
-            available_datasets[dataset]["dataset_details"][
-                "data_filename"
-            ] = os.path.join(
-                path, dataset, dataset_config["dataset_details"]["data_filename"]
+            available_datasets[dataset]["dataset_details"]["data_filename"] = (
+                os.path.join(
+                    path, dataset, dataset_config["dataset_details"]["data_filename"]
+                )
             )
+    else:
+        print(f"Path {path} does not exist!")
 
     print("RETURNING DATASETS")
+    print(f"Available datasets: {list(available_datasets.keys())}")
     return available_datasets
 
 
