@@ -1,5 +1,8 @@
 import argparse
 
+import matplotlib
+
+matplotlib.use("Agg")  # Use non-interactive backend
 import matplotlib.pyplot as plt
 
 from log_parser import parse_log_file
@@ -10,8 +13,15 @@ args = parser.parse_args()
 
 filename = args.f
 
-df = parse_log_file(filename)
-hack = df["thread_id"].unique()[-1]
+try:
+    df = parse_log_file(filename)
+    if df.empty:
+        print("Error: Empty log file")
+        exit(1)
+    hack = df["thread_id"].unique()[-1]
+except Exception as e:
+    print(f"Error parsing log file: {e}")
+    exit(1)
 
 if "48" in filename:
     plot_name = "PI_8GB"
@@ -24,27 +34,43 @@ monitor = df[df["thread_id"] == hack]
 monitor.reset_index()
 
 """NETWORK_I/O"""
-NETWORK = monitor[monitor["message"] == "NETWORK_I/O"]
+try:
+    NETWORK = monitor[monitor["message"] == "NETWORK_I/O"]
 
-sent = []
-recv = []
-for i, j in enumerate(NETWORK["values"]):
-    if i % 1 == 0:
-        sent.append(float(j[0]) / (1024))
-        recv.append(float(j[1]) / (1024))
+    sent = []
+    recv = []
+    for i, j in enumerate(NETWORK["values"]):
+        if i % 1 == 0:
+            try:
+                sent.append(float(j[0]) / (1024))
+                recv.append(float(j[1]) / (1024))
+            except (ValueError, TypeError, IndexError):
+                continue
+except Exception as e:
+    print(f"Error processing NETWORK_I/O data: {e}")
+    sent = []
+    recv = []
 
-fig, ax1 = plt.subplots()
-ax1.grid()
-x = list(range(len(recv[:500])))
-plt.ylim()
-plt.xlim(0, 500)
-plt.title(f"NETWORK I/O {plot_name}", fontsize=20)
-plt.xlabel("Seconds", fontsize=15)
-plt.ylabel("Kilobytes", fontsize=15)
-plt.plot(x, recv[:500], color="red", label="Bytes Recv")
-plt.plot(x, sent[:500], color="blue", label="Bytes Sent")
-plt.legend(bbox_to_anchor=(1.3, 1.0))
-fig.savefig(f"network_{plot_name}.jpg", bbox_inches="tight")
+try:
+    fig, ax1 = plt.subplots()
+    ax1.grid()
+    x = list(range(len(recv[:500])))
+    plt.ylim()
+    plt.xlim(0, 500)
+    plt.title(f"NETWORK I/O {plot_name}", fontsize=20)
+    plt.xlabel("Seconds", fontsize=15)
+    plt.ylabel("Kilobytes", fontsize=15)
+    plt.plot(x, recv[:500], color="red", label="Bytes Recv")
+    plt.plot(x, sent[:500], color="blue", label="Bytes Sent")
+    plt.legend(bbox_to_anchor=(1.3, 1.0))
+    fig.savefig(f"network_{plot_name}.jpg", bbox_inches="tight")
+    plt.close()
+except Exception as e:
+    print(f"Error creating NETWORK I/O plot: {e}")
+    try:
+        plt.close()
+    except:
+        pass
 
 """DISK_I/O"""
 DISK = monitor[monitor["message"] == "DISK_I/O"]

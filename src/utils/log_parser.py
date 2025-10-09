@@ -21,16 +21,30 @@ def parse_log_line(log_line):
 
 def parse_log_file(file_name):
     """Parses an entire log file and returns a pandas dataframe with the different columns."""
-    f = open(file_name, "r")
-    lines = f.readlines()
-    print(len(lines))
-    log_dicts = []
+    try:
+        f = open(file_name, "r")
+        lines = f.readlines()
+        f.close()
+        # Remove debug print statement
+        # print(len(lines))
+        log_dicts = []
 
-    for line in lines:
-        log_dict = {}
-        log_dict = parse_log_line(line)
-        log_dicts.append(log_dict)
+        for line in lines:
+            log_dict = {}
+            log_dict = parse_log_line(line)
+            log_dicts.append(log_dict)
 
-    df = pd.DataFrame(log_dicts)
-
-    return df
+        df = pd.DataFrame(log_dicts)
+        return df
+    except FileNotFoundError:
+        # Return empty dataframe if log file doesn't exist yet
+        return pd.DataFrame(
+            columns=[
+                "timestamp",
+                "component",
+                "level",
+                "thread_id",
+                "message",
+                "values",
+            ]
+        )
